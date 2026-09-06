@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'models/models.dart';
 import 'services/chat_service.dart';
@@ -176,6 +177,89 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               onPressed: () => Navigator.pop(ctx),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showMessageActionSheet(MessageModel msg, bool isMe) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF141414),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(height: 16),
+              if (msg.content.isNotEmpty)
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded, color: Colors.white70),
+                  title: const Text("Copy Text", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: msg.content));
+                    Navigator.pop(sheetCtx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Message copied to clipboard"), backgroundColor: Color(0xFF1E1E1E)),
+                    );
+                  },
+                ),
+              if (isMe)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                  title: const Text("Delete Message", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                  subtitle: const Text("Remove this message for everyone", style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  onTap: () async {
+                    Navigator.pop(sheetCtx);
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (dialogCtx) => AlertDialog(
+                        backgroundColor: const Color(0xFF141414),
+                        title: const Text("Delete Message?", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        content: const Text("Are you sure you want to delete this message?", style: TextStyle(color: Colors.white70)),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialogCtx, false),
+                            child: const Text("CANCEL", style: TextStyle(color: Colors.white54)),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+                            onPressed: () => Navigator.pop(dialogCtx, true),
+                            child: const Text("DELETE"),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (confirm == true) {
+                      try {
+                        await _chatService.deleteMessage(msg.id);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Message deleted"), backgroundColor: Color(0xFF1E1E1E)),
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text("Failed to delete message: $e"), backgroundColor: Colors.redAccent),
+                          );
+                        }
+                      }
+                    }
+                  },
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -377,28 +461,30 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
         return Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: isMe ? const Color(0xFF39FF14) : const Color(0xFF1E1E1E),
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(18),
-                topRight: const Radius.circular(18),
-                bottomLeft: Radius.circular(isMe ? 18 : 4),
-                bottomRight: Radius.circular(isMe ? 4 : 18),
+          child: GestureDetector(
+            onLongPress: () => _showMessageActionSheet(msg, isMe),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: isMe ? const Color(0xFF39FF14) : const Color(0xFF1E1E1E),
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(18),
+                  topRight: const Radius.circular(18),
+                  bottomLeft: Radius.circular(isMe ? 18 : 4),
+                  bottomRight: Radius.circular(isMe ? 4 : 18),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  )
+                ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
-                )
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              child: Column(
+                crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
                 // Image Attachment / Receipt Display
                 if (hasImage) ...[
@@ -480,9 +566,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               ],
             ),
           ),
-        );
-      },
-    );
+        ),
+      );
+    },
+  );
   }
 
   Widget _buildAvatarImage(String? imgPath) {

@@ -351,5 +351,23 @@ class ChatService {
       return [];
     }
   }
+
+  /// Delete a direct message
+  Future<void> deleteMessage(String messageId) async {
+    final dynamic targetId = int.tryParse(messageId) ?? messageId;
+    await _supabase.from('messages').delete().eq('id', targetId);
+  }
+
+  /// Delete a squad lobby message (by sender or match host)
+  Future<void> deleteLobbyMessage(String messageId) async {
+    final dynamic targetId = int.tryParse(messageId) ?? messageId;
+    try {
+      await _supabase.from('lobby_messages').delete().eq('id', targetId);
+    } catch (_) {
+      try {
+        await _supabase.from('messages').delete().eq('id', targetId);
+      } catch (_) {}
+    }
+  }
 }
 
