@@ -239,11 +239,33 @@ class ChatService {
         ? (isReceipt ? '🧾 Payment Receipt' : '📷 Image Attachment')
         : content.trim();
 
+    final payload = <String, dynamic>{
+      'lobby_id': lobbyId.toString(),
+      'sender_id': currentUserId,
+      'content': msgText,
+      'created_at': DateTime.now().toIso8601String(),
+      if (imageUrl != null) 'image_url': imageUrl,
+      if (isReceipt) 'is_receipt': true,
+    };
+
+    bool inserted = false;
     try {
-      // Primary: Insert into dedicated lobby_messages table
-      final payload = <String, dynamic>{
-        'lobby_id': lobbyId.toString(),
+      await _supabase.from('lobby_messages').insert(payload);
+      inserted = true;
+    } catch (e) {
+      if (payload.containsKey('is_receipt')) {
+        try {
+          payload.remove('is_receipt');
+          await _supabase.from('lobby_messages').insert(payload);
+          inserted = true;
+        } catch (_) {}
+      }
+    }
+
+    if (!inserted) {
+      final fallbackPayload = <String, dynamic>{
         'sender_id': currentUserId,
+        'receiver_id': 'lobby_$lobbyId',
         'content': msgText,
         'created_at': DateTime.now().toIso8601String(),
         if (imageUrl != null) 'image_url': imageUrl,
@@ -251,32 +273,10 @@ class ChatService {
       };
 
       try {
-        await _supabase.from('lobby_messages').insert(payload);
-      } catch (insertErr) {
-        payload.remove('is_receipt');
-        await _supabase.from('lobby_messages').insert(payload);
-      }
-    } catch (e) {
-      debugPrint("lobby_messages table not detected or failed, trying fallback to messages table: $e");
-      try {
-        final fallbackPayload = <String, dynamic>{
-          'sender_id': currentUserId,
-          'receiver_id': 'lobby_$lobbyId',
-          'content': msgText,
-          'created_at': DateTime.now().toIso8601String(),
-          if (imageUrl != null) 'image_url': imageUrl,
-          if (isReceipt) 'is_receipt': true,
-        };
-
-        try {
-          await _supabase.from('messages').insert(fallbackPayload);
-        } catch (fallbackInsertErr) {
-          fallbackPayload.remove('is_receipt');
-          await _supabase.from('messages').insert(fallbackPayload);
-        }
-      } catch (fallbackError) {
-        debugPrint("Fatal error sending squad message: $fallbackError");
-        rethrow;
+        await _supabase.from('messages').insert(fallbackPayload);
+      } catch (_) {
+        fallbackPayload.remove('is_receipt');
+        await _supabase.from('messages').insert(fallbackPayload);
       }
     }
   }

@@ -74,11 +74,15 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
   }
 
   Future<void> _pickAndAttachImage(ImageSource source, {bool isReceipt = false}) async {
+    if (_isUploading) return;
+    setState(() => _isUploading = true);
+
     try {
       final picked = await _imagePicker.pickImage(source: source, imageQuality: 70);
-      if (picked == null) return;
-
-      setState(() => _isUploading = true);
+      if (picked == null) {
+        if (mounted) setState(() => _isUploading = false);
+        return;
+      }
 
       final url = await _chatService.uploadChatImage(picked);
       if (url != null) {
@@ -1130,9 +1134,11 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
       future: _getSenderProfile(msg.senderId),
       builder: (context, snapshot) {
         final profile = snapshot.data;
+        final userProfile = isHost ? (widget.lobby.hostProfile ?? profile) : profile;
         final senderName = isHost
-            ? (widget.lobby.hostProfile?.name ?? profile?.name ?? "Host")
-            : (profile?.name ?? "Teammate");
+            ? (userProfile?.name ?? "Host")
+            : (userProfile?.name ?? "Teammate");
+        final avatarUrl = userProfile?.imageUrl;
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 14),
@@ -1140,20 +1146,27 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               GestureDetector(
-                onTap: () => _showPlayerProfilePeekSheet(profile, isMe: false, isHost: isHost),
+                onTap: () => _showPlayerProfilePeekSheet(userProfile, isMe: false, isHost: isHost),
                 child: CircleAvatar(
                   radius: 16,
                   backgroundColor: isHost
                       ? const Color(0xFFFFD700).withValues(alpha: 0.2)
                       : const Color(0xFF222222),
-                  child: Text(
-                    senderName.isNotEmpty ? senderName[0].toUpperCase() : '?',
-                    style: TextStyle(
-                      color: isHost ? const Color(0xFFFFD700) : const Color(0xFF39FF14),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
+                  backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                      ? (avatarUrl.startsWith('http')
+                          ? NetworkImage(avatarUrl) as ImageProvider
+                          : AssetImage(avatarUrl))
+                      : null,
+                  child: (avatarUrl == null || avatarUrl.isEmpty)
+                      ? Text(
+                          senderName.isNotEmpty ? senderName[0].toUpperCase() : '?',
+                          style: TextStyle(
+                            color: isHost ? const Color(0xFFFFD700) : const Color(0xFF39FF14),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        )
+                      : null,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1162,7 +1175,7 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     GestureDetector(
-                      onTap: () => _showPlayerProfilePeekSheet(profile, isMe: false, isHost: isHost),
+                      onTap: () => _showPlayerProfilePeekSheet(userProfile, isMe: false, isHost: isHost),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
