@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -15,18 +16,63 @@ class ChatService {
     if (currentUserId == null) return null;
     try {
       final bytes = await file.readAsBytes();
-      final ext = file.name.split('.').last.toLowerCase();
+      String ext = file.name.contains('.') ? file.name.split('.').last.toLowerCase() : 'jpg';
+      if (ext.isEmpty || ext == 'jpeg') ext = 'jpg';
+      final mimeType = ext == 'png' ? 'image/png' : (ext == 'webp' ? 'image/webp' : 'image/jpeg');
       final fileName = 'chat_${currentUserId}_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      final path = 'attachments/$fileName';
 
-      await _supabase.storage.from('avatars').uploadBinary(
-        path,
-        bytes,
-        fileOptions: FileOptions(contentType: 'image/$ext', upsert: true),
-      );
+      // 1. Try avatars bucket under attachments/ subpath
+      try {
+        await _supabase.storage.from('avatars').uploadBinary(
+          'attachments/$fileName',
+          bytes,
+          fileOptions: FileOptions(contentType: mimeType, upsert: true),
+        );
+        return _supabase.storage.from('avatars').getPublicUrl('attachments/$fileName');
+      } catch (e1) {
+        debugPrint("Notice: upload to avatars/attachments failed ($e1), trying bucket root");
+      }
 
-      final publicUrl = _supabase.storage.from('avatars').getPublicUrl(path);
-      return publicUrl;
+      // 2. Try avatars bucket at root
+      try {
+        await _supabase.storage.from('avatars').uploadBinary(
+          fileName,
+          bytes,
+          fileOptions: FileOptions(contentType: mimeType, upsert: true),
+        );
+        return _supabase.storage.from('avatars').getPublicUrl(fileName);
+      } catch (e2) {
+        debugPrint("Notice: upload to avatars root failed ($e2), trying chat_attachments bucket");
+      }
+
+      // 3. Try chat_attachments bucket
+      try {
+        await _supabase.storage.from('chat_attachments').uploadBinary(
+          fileName,
+          bytes,
+          fileOptions: FileOptions(contentType: mimeType, upsert: true),
+        );
+        return _supabase.storage.from('chat_attachments').getPublicUrl(fileName);
+      } catch (e3) {
+        debugPrint("Notice: upload to chat_attachments failed ($e3)");
+      }
+
+      // 4. Try native IO file upload on mobile
+      if (!kIsWeb && file.path.isNotEmpty) {
+        try {
+          final ioFile = File(file.path);
+          await _supabase.storage.from('avatars').upload(
+            fileName,
+            ioFile,
+            fileOptions: FileOptions(contentType: mimeType, upsert: true),
+          );
+          return _supabase.storage.from('avatars').getPublicUrl(fileName);
+        } catch (e4) {
+          debugPrint("Notice: native File upload failed ($e4)");
+        }
+      }
+
+      return null;
     } catch (e) {
       debugPrint("Warning uploading image attachment: $e");
       return null;
@@ -142,10 +188,16 @@ class ChatService {
         'receiver_id': receiverId,
         'content': msgText,
         'created_at': DateTime.now().toIso8601String(),
+        if (imageUrl != null) 'image_url': imageUrl,
+        if (isReceipt) 'is_receipt': true,
       };
-      if (imageUrl != null) payload['image_url'] = imageUrl;
 
-      await _supabase.from('messages').insert(payload);
+      try {
+        await _supabase.from('messages').insert(payload);
+      } catch (insertErr) {
+        payload.remove('is_receipt');
+        await _supabase.from('messages').insert(payload);
+      }
     } catch (e) {
       debugPrint("Error sending chat message: $e");
       rethrow;
@@ -193,10 +245,16 @@ class ChatService {
         'sender_id': currentUserId,
         'content': msgText,
         'created_at': DateTime.now().toIso8601String(),
+        if (imageUrl != null) 'image_url': imageUrl,
+        if (isReceipt) 'is_receipt': true,
       };
-      if (imageUrl != null) payload['image_url'] = imageUrl;
 
-      await _supabase.from('lobby_messages').insert(payload);
+      try {
+        await _supabase.from('lobby_messages').insert(payload);
+      } catch (insertErr) {
+        payload.remove('is_receipt');
+        await _supabase.from('lobby_messages').insert(payload);
+      }
     } catch (e) {
       debugPrint("lobby_messages table not detected or failed, trying fallback to messages table: $e");
       try {
@@ -205,10 +263,16 @@ class ChatService {
           'receiver_id': 'lobby_$lobbyId',
           'content': msgText,
           'created_at': DateTime.now().toIso8601String(),
+          if (imageUrl != null) 'image_url': imageUrl,
+          if (isReceipt) 'is_receipt': true,
         };
-        if (imageUrl != null) fallbackPayload['image_url'] = imageUrl;
 
-        await _supabase.from('messages').insert(fallbackPayload);
+        try {
+          await _supabase.from('messages').insert(fallbackPayload);
+        } catch (fallbackInsertErr) {
+          fallbackPayload.remove('is_receipt');
+          await _supabase.from('messages').insert(fallbackPayload);
+        }
       } catch (fallbackError) {
         debugPrint("Fatal error sending squad message: $fallbackError");
         rethrow;
@@ -230,6 +294,8 @@ class ChatService {
                     'sender_id': json['sender_id']?.toString() ?? '',
                     'receiver_id': json['lobby_id']?.toString() ?? lobbyId,
                     'content': json['content']?.toString() ?? '',
+                    'image_url': json['image_url']?.toString() ?? json['imageUrl']?.toString(),
+                    'is_receipt': json['is_receipt'] == true,
                     'created_at': json['created_at'],
                   }))
               .toList());
