@@ -20,6 +20,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final TextEditingController _msgController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isUploading = false;
+  bool _isPickingImage = false;
+  bool _isSending = false;
 
   @override
   void dispose() {
@@ -29,10 +31,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Future<void> _handleSendMessage({String? imageUrl, bool isReceipt = false}) async {
+    if (_isSending) return;
     final text = _msgController.text.trim();
     if (text.isEmpty && imageUrl == null) return;
 
-    _msgController.clear();
+    _isSending = true;
+    if (imageUrl == null) {
+      _msgController.clear();
+    }
 
     try {
       await _chatService.sendMessage(
@@ -48,18 +54,26 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           SnackBar(content: Text("Failed to send message: $e"), backgroundColor: Colors.redAccent),
         );
       }
+    } finally {
+      _isSending = false;
     }
   }
 
   Future<void> _pickAndAttachImage(ImageSource source, {bool isReceipt = false}) async {
+    if (_isUploading || _isPickingImage) return;
+    _isPickingImage = true;
+    setState(() => _isUploading = true);
+
     try {
       final picked = await _imagePicker.pickImage(source: source, imageQuality: 70);
-      if (picked == null) return;
-
-      setState(() => _isUploading = true);
+      _isPickingImage = false;
+      if (picked == null) {
+        if (mounted) setState(() => _isUploading = false);
+        return;
+      }
 
       final url = await _chatService.uploadChatImage(picked);
-      if (url != null) {
+      if (url != null && mounted) {
         await _handleSendMessage(imageUrl: url, isReceipt: isReceipt);
       }
     } catch (e) {
@@ -70,6 +84,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         );
       }
     } finally {
+      _isPickingImage = false;
       if (mounted) setState(() => _isUploading = false);
     }
   }

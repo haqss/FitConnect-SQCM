@@ -26,6 +26,8 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final Map<String, ProfileModel?> _profileCache = {};
   bool _isUploading = false;
+  bool _isPickingImage = false;
+  bool _isSending = false;
 
   String _pinnedAnnouncement = "📌 Court details: Please arrive 15m early with turf shoes!";
   bool _isAnnouncementExpanded = true;
@@ -47,10 +49,12 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
   }
 
   Future<void> _handleSendMessage({String? prefilled, String? imageUrl, bool isReceipt = false}) async {
+    if (_isSending) return;
     final text = (prefilled ?? _msgController.text).trim();
     if (text.isEmpty && imageUrl == null) return;
 
-    if (prefilled == null) {
+    _isSending = true;
+    if (prefilled == null && imageUrl == null) {
       _msgController.clear();
     }
 
@@ -71,22 +75,26 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
           ),
         );
       }
+    } finally {
+      _isSending = false;
     }
   }
 
   Future<void> _pickAndAttachImage(ImageSource source, {bool isReceipt = false}) async {
-    if (_isUploading) return;
+    if (_isUploading || _isPickingImage) return;
+    _isPickingImage = true;
     setState(() => _isUploading = true);
 
     try {
       final picked = await _imagePicker.pickImage(source: source, imageQuality: 70);
+      _isPickingImage = false;
       if (picked == null) {
         if (mounted) setState(() => _isUploading = false);
         return;
       }
 
       final url = await _chatService.uploadChatImage(picked);
-      if (url != null) {
+      if (url != null && mounted) {
         await _handleSendMessage(imageUrl: url, isReceipt: isReceipt);
       }
     } catch (e) {
@@ -97,6 +105,7 @@ class _LobbyGroupChatScreenState extends State<LobbyGroupChatScreen> {
         );
       }
     } finally {
+      _isPickingImage = false;
       if (mounted) setState(() => _isUploading = false);
     }
   }

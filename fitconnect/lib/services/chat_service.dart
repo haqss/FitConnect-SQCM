@@ -80,6 +80,21 @@ class ChatService {
     throw Exception(lastError.toString());
   }
 
+  String? _lastSentSignature;
+  DateTime? _lastSentTime;
+
+  bool _isDuplicateSend(String signature) {
+    final now = DateTime.now();
+    if (_lastSentSignature == signature &&
+        _lastSentTime != null &&
+        now.difference(_lastSentTime!).inMilliseconds < 2500) {
+      return true;
+    }
+    _lastSentSignature = signature;
+    _lastSentTime = now;
+    return false;
+  }
+
   /// Send a chat message to a specific user (Requires mutual match OR shared match lobby)
   Future<void> sendMessage({
     required String receiverId,
@@ -88,6 +103,12 @@ class ChatService {
     bool isReceipt = false,
   }) async {
     if (currentUserId == null || (content.trim().isEmpty && imageUrl == null)) return;
+
+    final signature = "dm-$currentUserId-$receiverId-${content.trim()}-$imageUrl-$isReceipt";
+    if (_isDuplicateSend(signature)) {
+      debugPrint("Duplicate direct message prevented: $signature");
+      return;
+    }
 
     try {
       // 1. Verify mutual match exists between current user and target user
@@ -214,12 +235,20 @@ class ChatService {
           .from('messages')
           .stream(primaryKey: ['id'])
           .order('created_at', ascending: true)
-          .map((list) => list
-              .map((json) => MessageModel.fromJson(json))
-              .where((m) =>
-                  (m.senderId == currentUserId && m.receiverId == otherUserId) ||
-                  (m.senderId == otherUserId && m.receiverId == currentUserId))
-              .toList());
+          .map((list) {
+            final seenIds = <String>{};
+            final result = <MessageModel>[];
+            for (final json in list) {
+              final m = MessageModel.fromJson(json);
+              final isRelevant = (m.senderId == currentUserId && m.receiverId == otherUserId) ||
+                  (m.senderId == otherUserId && m.receiverId == currentUserId);
+              if (isRelevant) {
+                if (m.id.isNotEmpty && !seenIds.add(m.id)) continue;
+                result.add(m);
+              }
+            }
+            return result;
+          });
     } catch (e) {
       debugPrint("Error streaming messages: $e");
       return const Stream.empty();
@@ -234,6 +263,12 @@ class ChatService {
     bool isReceipt = false,
   }) async {
     if (currentUserId == null || (content.trim().isEmpty && imageUrl == null)) return;
+
+    final signature = "lobby-$currentUserId-$lobbyId-${content.trim()}-$imageUrl-$isReceipt";
+    if (_isDuplicateSend(signature)) {
+      debugPrint("Duplicate lobby message prevented: $signature");
+      return;
+    }
 
     final msgText = content.trim().isEmpty
         ? (isReceipt ? '🧾 Payment Receipt' : '📷 Image Attachment')
@@ -288,18 +323,25 @@ class ChatService {
           .from('lobby_messages')
           .stream(primaryKey: ['id'])
           .order('created_at', ascending: true)
-          .map((list) => list
-              .where((json) => json['lobby_id']?.toString() == lobbyId.toString())
-              .map((json) => MessageModel.fromJson({
-                    'id': json['id']?.toString() ?? '',
-                    'sender_id': json['sender_id']?.toString() ?? '',
-                    'receiver_id': json['lobby_id']?.toString() ?? lobbyId,
-                    'content': json['content']?.toString() ?? '',
-                    'image_url': json['image_url']?.toString() ?? json['imageUrl']?.toString(),
-                    'is_receipt': json['is_receipt'] == true,
-                    'created_at': json['created_at'],
-                  }))
-              .toList());
+          .map((list) {
+            final seenIds = <String>{};
+            final result = <MessageModel>[];
+            for (final json in list) {
+              if (json['lobby_id']?.toString() != lobbyId.toString()) continue;
+              final msg = MessageModel.fromJson({
+                'id': json['id']?.toString() ?? '',
+                'sender_id': json['sender_id']?.toString() ?? '',
+                'receiver_id': json['lobby_id']?.toString() ?? lobbyId,
+                'content': json['content']?.toString() ?? '',
+                'image_url': json['image_url']?.toString() ?? json['imageUrl']?.toString(),
+                'is_receipt': json['is_receipt'] == true,
+                'created_at': json['created_at'],
+              });
+              if (msg.id.isNotEmpty && !seenIds.add(msg.id)) continue;
+              result.add(msg);
+            }
+            return result;
+          });
     } catch (e) {
       debugPrint("Error streaming lobby_messages, trying messages stream: $e");
       final targetKey = 'lobby_$lobbyId';
@@ -307,10 +349,19 @@ class ChatService {
           .from('messages')
           .stream(primaryKey: ['id'])
           .order('created_at', ascending: true)
-          .map((list) => list
-              .where((m) => m['receiver_id']?.toString() == targetKey || m['receiver_id']?.toString() == lobbyId.toString())
-              .map((json) => MessageModel.fromJson(json))
-              .toList());
+          .map((list) {
+            final seenIds = <String>{};
+            final result = <MessageModel>[];
+            for (final m in list) {
+              final recId = m['receiver_id']?.toString();
+              if (recId == targetKey || recId == lobbyId.toString()) {
+                final msg = MessageModel.fromJson(m);
+                if (msg.id.isNotEmpty && !seenIds.add(msg.id)) continue;
+                result.add(msg);
+              }
+            }
+            return result;
+          });
     }
   }
 
