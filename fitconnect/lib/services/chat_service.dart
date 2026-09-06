@@ -287,9 +287,9 @@ class ChatService {
       return _supabase
           .from('lobby_messages')
           .stream(primaryKey: ['id'])
-          .eq('lobby_id', lobbyId.toString())
           .order('created_at', ascending: true)
           .map((list) => list
+              .where((json) => json['lobby_id']?.toString() == lobbyId.toString())
               .map((json) => MessageModel.fromJson({
                     'id': json['id']?.toString() ?? '',
                     'sender_id': json['sender_id']?.toString() ?? '',
@@ -308,7 +308,7 @@ class ChatService {
           .stream(primaryKey: ['id'])
           .order('created_at', ascending: true)
           .map((list) => list
-              .where((m) => m['receiver_id'] == targetKey || m['receiver_id'] == lobbyId)
+              .where((m) => m['receiver_id']?.toString() == targetKey || m['receiver_id']?.toString() == lobbyId.toString())
               .map((json) => MessageModel.fromJson(json))
               .toList());
     }
@@ -363,10 +363,13 @@ class ChatService {
     final dynamic targetId = int.tryParse(messageId) ?? messageId;
     try {
       await _supabase.from('lobby_messages').delete().eq('id', targetId);
-    } catch (_) {
-      try {
-        await _supabase.from('messages').delete().eq('id', targetId);
-      } catch (_) {}
+    } catch (e) {
+      debugPrint("Notice: could not delete from lobby_messages: $e");
+    }
+    try {
+      await _supabase.from('messages').delete().eq('id', targetId);
+    } catch (e) {
+      debugPrint("Notice: could not delete from messages: $e");
     }
   }
 }
