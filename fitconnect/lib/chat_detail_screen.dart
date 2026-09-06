@@ -60,15 +60,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       final url = await _chatService.uploadChatImage(picked);
       if (url != null) {
         await _handleSendMessage(imageUrl: url, isReceipt: isReceipt);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Failed to upload image. Please try again."), backgroundColor: Colors.redAccent),
-          );
-        }
       }
     } catch (e) {
       debugPrint("Attachment error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Upload error: $e"), backgroundColor: Colors.redAccent),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }

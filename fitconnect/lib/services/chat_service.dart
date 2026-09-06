@@ -13,70 +13,71 @@ class ChatService {
 
   /// Upload chat image / payment receipt to Supabase Storage and return public URL
   Future<String?> uploadChatImage(XFile file) async {
-    if (currentUserId == null) return null;
+    if (currentUserId == null) throw Exception("User not logged in.");
+    
+    final bytes = await file.readAsBytes();
+    String ext = file.name.contains('.') ? file.name.split('.').last.toLowerCase() : 'jpg';
+    if (ext.isEmpty || ext == 'jpeg') ext = 'jpg';
+    final mimeType = ext == 'png' ? 'image/png' : (ext == 'webp' ? 'image/webp' : 'image/jpeg');
+    final fileName = 'chat_${currentUserId}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    Object lastError = "Could not upload image to Supabase Storage.";
+
+    // 1. Try avatars bucket under attachments/ subpath
     try {
-      final bytes = await file.readAsBytes();
-      String ext = file.name.contains('.') ? file.name.split('.').last.toLowerCase() : 'jpg';
-      if (ext.isEmpty || ext == 'jpeg') ext = 'jpg';
-      final mimeType = ext == 'png' ? 'image/png' : (ext == 'webp' ? 'image/webp' : 'image/jpeg');
-      final fileName = 'chat_${currentUserId}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      await _supabase.storage.from('avatars').uploadBinary(
+        'attachments/$fileName',
+        bytes,
+        fileOptions: FileOptions(contentType: mimeType, upsert: true),
+      );
+      return _supabase.storage.from('avatars').getPublicUrl('attachments/$fileName');
+    } catch (e1) {
+      lastError = e1;
+      debugPrint("Notice: upload to avatars/attachments failed ($e1), trying bucket root");
+    }
 
-      // 1. Try avatars bucket under attachments/ subpath
-      try {
-        await _supabase.storage.from('avatars').uploadBinary(
-          'attachments/$fileName',
-          bytes,
-          fileOptions: FileOptions(contentType: mimeType, upsert: true),
-        );
-        return _supabase.storage.from('avatars').getPublicUrl('attachments/$fileName');
-      } catch (e1) {
-        debugPrint("Notice: upload to avatars/attachments failed ($e1), trying bucket root");
-      }
+    // 2. Try avatars bucket at root
+    try {
+      await _supabase.storage.from('avatars').uploadBinary(
+        fileName,
+        bytes,
+        fileOptions: FileOptions(contentType: mimeType, upsert: true),
+      );
+      return _supabase.storage.from('avatars').getPublicUrl(fileName);
+    } catch (e2) {
+      lastError = e2;
+      debugPrint("Notice: upload to avatars root failed ($e2), trying chat_attachments bucket");
+    }
 
-      // 2. Try avatars bucket at root
+    // 3. Try chat_attachments bucket
+    try {
+      await _supabase.storage.from('chat_attachments').uploadBinary(
+        fileName,
+        bytes,
+        fileOptions: FileOptions(contentType: mimeType, upsert: true),
+      );
+      return _supabase.storage.from('chat_attachments').getPublicUrl(fileName);
+    } catch (e3) {
+      lastError = e3;
+      debugPrint("Notice: upload to chat_attachments failed ($e3)");
+    }
+
+    // 4. Try native IO file upload on mobile
+    if (!kIsWeb && file.path.isNotEmpty) {
       try {
-        await _supabase.storage.from('avatars').uploadBinary(
+        final ioFile = File(file.path);
+        await _supabase.storage.from('avatars').upload(
           fileName,
-          bytes,
+          ioFile,
           fileOptions: FileOptions(contentType: mimeType, upsert: true),
         );
         return _supabase.storage.from('avatars').getPublicUrl(fileName);
-      } catch (e2) {
-        debugPrint("Notice: upload to avatars root failed ($e2), trying chat_attachments bucket");
+      } catch (e4) {
+        lastError = e4;
+        debugPrint("Notice: native File upload failed ($e4)");
       }
-
-      // 3. Try chat_attachments bucket
-      try {
-        await _supabase.storage.from('chat_attachments').uploadBinary(
-          fileName,
-          bytes,
-          fileOptions: FileOptions(contentType: mimeType, upsert: true),
-        );
-        return _supabase.storage.from('chat_attachments').getPublicUrl(fileName);
-      } catch (e3) {
-        debugPrint("Notice: upload to chat_attachments failed ($e3)");
-      }
-
-      // 4. Try native IO file upload on mobile
-      if (!kIsWeb && file.path.isNotEmpty) {
-        try {
-          final ioFile = File(file.path);
-          await _supabase.storage.from('avatars').upload(
-            fileName,
-            ioFile,
-            fileOptions: FileOptions(contentType: mimeType, upsert: true),
-          );
-          return _supabase.storage.from('avatars').getPublicUrl(fileName);
-        } catch (e4) {
-          debugPrint("Notice: native File upload failed ($e4)");
-        }
-      }
-
-      return null;
-    } catch (e) {
-      debugPrint("Warning uploading image attachment: $e");
-      return null;
     }
+
+    throw Exception(lastError.toString());
   }
 
   /// Send a chat message to a specific user (Requires mutual match OR shared match lobby)
